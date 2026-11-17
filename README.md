@@ -8,9 +8,9 @@ Forecasts Grand Theft Auto VI's launch-day Twitch concurrent viewers hour by hou
 
 ## How it works
 
-`main.py` (Python 3.13, standard library only) reads a case file and writes one forecast per case. For every past launch shipped with the case ("comparables"), it extracts the release-day curve as log-ratios to that launch's own hour-1 print. The target's hour-1 print anchors the forecast: each hour's median is the print times the similarity-weighted mean log-ratio across launches, and the five quantiles come from the weighted cross-launch spread of the log-ratios. Launch similarity weights reward a similar hour-1 scale, a similar launch jump over the pre-release baseline, console-only platforms, and a matching weekday/weekend release. A persistence prior regularises hours with sparse data.
+`main.py` (Python 3.13, standard library only) reads a case file and writes one forecast per case. For every past launch shipped with the case ("comparables"), it extracts the release-day curve as log-ratios to that launch's own hour-1 print. The target's hour-1 print anchors the forecast: each hour's median is the print times the similarity-weighted mean log-ratio across launches, and the five quantiles come from the weighted cross-launch spread of the log-ratios. Launch similarity weights reward a similar hour-1 scale, a similar launch jump over the pre-release baseline, a similar pre-release ramp (how hard viewership was already climbing in the final 3 hours before release versus the first 3 hours of the pre-release day), console-only platforms, and a matching weekday/weekend release. A persistence prior regularises hours with sparse data.
 
-Leave-one-out cross-validation over the kit's comparables gives a mean pinball loss of 0.204 on big launches (hour-1 print ≥ 50k), against 0.251 for the house persistence baseline.
+Leave-one-out cross-validation over the kit's comparables gives a mean pinball loss of 0.195 on big launches (hour-1 print ≥ 50k), against 0.251 for the house persistence baseline.
 
 ## Run it
 

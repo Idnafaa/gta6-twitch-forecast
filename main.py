@@ -9,12 +9,16 @@ The target game's hour-1 print anchors the forecast: for each hour h the
 median is p1 * exp(weighted mean log-ratio) and the five quantiles come
 from a normal with the weighted cross-launch standard deviation of the
 log-ratios, calibrated on leave-one-out cross-validation over the
-comparables (LOO pinball loss 0.204 on big launches vs 0.251 for the house
+comparables (LOO pinball loss 0.195 on big launches vs 0.251 for the house
 persistence baseline).
 
 Comparable weights reward similarity to the target launch:
   - scale: hour-1 print within about an order of magnitude;
   - launch jump: hour-1 print relative to the 24 h pre-release mean;
+  - pre-release ramp: how hard viewership was already climbing in the
+    final 3 hours before release versus the first 3 hours of the
+    pre-release day (launches with a similar last-hours hype ramp have
+    similar release-day decay shapes);
   - platform: console-only launches weigh more for a console-only game;
   - weekday vs weekend release day.
 A persistence prior (log-ratio 0) regularises hours where few comparables
@@ -40,6 +44,7 @@ Z = [-1.645, -0.674, 0.0, 0.674, 1.645]
 # Tuned by leave-one-out cross-validation on the kit's comparables.
 SIGMA_SCALE = 1.0    # log-scale bandwidth for hour-1 similarity
 SIGMA_JUMP = 2.0     # log-scale bandwidth for launch-jump similarity
+SIGMA_RAMP = 1.0     # log-scale bandwidth for pre-release-ramp similarity
 W_NON_CONSOLE = 0.6  # weight multiplier for launches that include PC
 W_WEEKEND_MISMATCH = 0.7
 SPREAD_MULT = 0.8    # calibration multiplier on the cross-launch spread
@@ -62,17 +67,46 @@ def round2(x):
     return int(value) if value == int(value) else value
 
 
+def pre_window_stats(rows, day_start):
+    """Mean viewers and 3-hour ramp over the 24 h before the release day.
+
+    Returns (mean, ramp3) where ramp3 is ln(mean of the last 3 pre-release
+    hours / mean of the first 3 pre-release hours), or (mean, None) when
+    fewer than 6 pre-release points exist. Rows are sorted by time so the
+    first/last 3 hours are the right ones regardless of input order.
+    """
+    ds = parse_ts(day_start)
+    pre = []
+    for row in rows or []:
+        v = row.get("viewers")
+        if v is None or v <= 0:
+            continue
+        t = parse_ts(row["from"])
+        delta = (t - ds).total_seconds() / 3600.0
+        if -24 <= delta < 0:
+            pre.append((t, v))
+    pre.sort()
+    vals = [v for _, v in pre]
+    if len(vals) < MIN_PRE_POINTS:
+        return None, None
+    mean = sum(vals) / len(vals)
+    if len(vals) < 6:
+        return mean, None
+    ramp3 = math.log(max(sum(vals[-3:]) / 3.0, 1.0)
+                     / max(sum(vals[:3]) / 3.0, 1.0))
+    return mean, ramp3
+
+
 def release_day_curve(comp):
     """Extract a comparable's release-day curve.
 
     Returns dict with hour-1 viewers, {hour: viewers} for the release day,
-    the mean viewers over the 24 h before release, the release weekday and
-    whether the launch was console-only. Returns None when the release day
-    is too sparse to use.
+    the mean viewers over the 24 h before release, the pre-release 3-hour
+    ramp, the release weekday and whether the launch was console-only.
+    Returns None when the release day is too sparse to use.
     """
     ds = parse_ts(comp["day_start"])
     by_hour = {}
-    pre = []
     for row in comp.get("hourly") or []:
         v = row.get("viewers")
         if v is None or v <= 0:
@@ -81,35 +115,18 @@ def release_day_curve(comp):
         delta = (t - ds).total_seconds() / 3600.0
         if 0 <= delta < 24:
             by_hour[int(delta) + 1] = v
-        elif -24 <= delta < 0:
-            pre.append(v)
     if 1 not in by_hour or len(by_hour) < MIN_DAY_HOURS:
         return None
+    pre_mean, ramp3 = pre_window_stats(comp.get("hourly"), comp["day_start"])
     plats = comp.get("platforms", "")
     return {
         "p1": by_hour[1],
         "curve": by_hour,
-        "pre": (sum(pre) / len(pre)) if len(pre) >= MIN_PRE_POINTS else None,
+        "pre": pre_mean,
+        "ramp3": ramp3,
         "weekday": ds.weekday(),
         "console_only": "PC" not in plats,
     }
-
-
-def pre_release_mean(history_hourly, day_start):
-    """Mean viewers over the 24 h before the release day, or None."""
-    ds = parse_ts(day_start)
-    vals = []
-    for row in history_hourly or []:
-        v = row.get("viewers")
-        if v is None or v <= 0:
-            continue
-        t = parse_ts(row["from"])
-        delta = (t - ds).total_seconds() / 3600.0
-        if -24 <= delta < 0:
-            vals.append(v)
-    if len(vals) < MIN_PRE_POINTS:
-        return None
-    return sum(vals) / len(vals)
 
 
 def baseline_quantiles(p1, h):
@@ -125,7 +142,8 @@ def forecast_case(case):
         raise ValueError("no hour-1 print")
     p1 = max(1.0, float(first["viewers"]))
     day_start = case["day_start"]
-    pre_target = pre_release_mean(case.get("history_hourly"), day_start)
+    pre_target, ramp_target = pre_window_stats(case.get("history_hourly"),
+                                               day_start)
     weekday_target = parse_ts(day_start).weekday()
     # GTA VI is console-only (PS5 / Xbox Series X|S).
     console_target = True
@@ -147,6 +165,9 @@ def forecast_case(case):
             jump_t = math.log(p1 / pre_target)
             jump_r = math.log(r["p1"] / r["pre"])
             w *= math.exp(-((jump_t - jump_r) ** 2) / (2 * SIGMA_JUMP ** 2))
+        if ramp_target is not None and r.get("ramp3") is not None:
+            w *= math.exp(-((ramp_target - r["ramp3"]) ** 2)
+                          / (2 * SIGMA_RAMP ** 2))
         if console_target and not r["console_only"]:
             w *= W_NON_CONSOLE
         if (weekday_target >= 5) != (r["weekday"] >= 5):
