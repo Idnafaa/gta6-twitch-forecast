@@ -39,7 +39,7 @@ Z = [-1.645, -0.674, 0.0, 0.674, 1.645]
 
 # Tuned by leave-one-out cross-validation on the kit's comparables.
 SIGMA_SCALE = 1.0    # log-scale bandwidth for hour-1 similarity
-SIGMA_JUMP = 2.0     # log-scale bandwidth for launch-jump similarity
+SIGMA_JUMP = 1.2     # log-scale bandwidth for launch-jump similarity
 W_NON_CONSOLE = 0.6  # weight multiplier for launches that include PC
 W_WEEKEND_MISMATCH = 0.7
 SPREAD_MULT = 0.8    # calibration multiplier on the cross-launch spread
